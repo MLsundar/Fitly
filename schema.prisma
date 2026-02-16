@@ -1,0 +1,225 @@
+// Fitly Database Schema
+// PostgreSQL via Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── CONSUMER ───────────────────────────────────────────
+model Consumer {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  measurements  Measurement[]
+  orders        Order[]
+  payments      Payment[]
+}
+
+// ─── TAILOR ─────────────────────────────────────────────
+model Tailor {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  businessName  String
+  firstName     String
+  lastName      String
+  phone         String
+  address       String
+  city          String
+  state         String
+  zipCode       String
+  country       String   @default("US")
+  latitude      Float?
+  longitude     Float?
+  bio           String?
+  avatarUrl     String?
+  idDocumentUrl String?
+  isVerified    Boolean  @default(false)
+  rating        Float    @default(0)
+  totalJobs     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  bids          Bid[]
+  orders        Order[]
+  payouts       Payout[]
+}
+
+// ─── MEASUREMENT ────────────────────────────────────────
+model Measurement {
+  id              String   @id @default(uuid())
+  consumerId      String
+  consumer        Consumer @relation(fields: [consumerId], references: [id])
+
+  // Upper body (inches)
+  chest           Float?
+  shoulders       Float?
+  sleeveLength    Float?
+  neckCircumference Float?
+  torsoLength     Float?
+  
+  // Lower body (inches)
+  waist           Float?
+  hips            Float?
+  inseam          Float?
+  outseam         Float?
+  thigh           Float?
+
+  // General
+  height          Float?
+  weight          Float?
+  
+  // Camera capture metadata
+  frontImageUrl   String?
+  sideImageUrl    String?
+  captureMethod   String   @default("camera") // camera | manual
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orders          Order[]
+}
+
+// ─── GARMENT TYPES ──────────────────────────────────────
+enum GarmentType {
+  PANTS
+  HALF_SLEEVE_SHIRT
+  FULL_SLEEVE_SHIRT
+  SHORTS
+}
+
+enum FitStyle {
+  COMFORT
+}
+
+// ─── ORDER (Consumer Request) ───────────────────────────
+enum OrderStatus {
+  OPEN           // Accepting bids
+  BID_SELECTED   // Consumer picked a tailor
+  IN_PROGRESS    // Tailor working
+  COMPLETED      // Done
+  CANCELLED
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  consumerId      String
+  consumer        Consumer    @relation(fields: [consumerId], references: [id])
+  measurementId   String
+  measurement     Measurement @relation(fields: [measurementId], references: [id])
+  
+  garmentType     GarmentType
+  fitStyle        FitStyle    @default(COMFORT)
+  quantity        Int         @default(1)
+  notes           String?
+  
+  status          OrderStatus @default(OPEN)
+  
+  // Selected bid / tailor
+  selectedBidId   String?     @unique
+  selectedBid     Bid?        @relation("SelectedBid", fields: [selectedBidId], references: [id])
+  tailorId        String?
+  tailor          Tailor?     @relation(fields: [tailorId], references: [id])
+
+  totalPrice      Float?      // Final price from selected bid
+  platformFee     Float?      // 20% of totalPrice
+  tailorPayout    Float?      // 80% of totalPrice
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  bids            Bid[]       @relation("OrderBids")
+  payment         Payment?
+}
+
+// ─── BID ────────────────────────────────────────────────
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model Bid {
+  id            String    @id @default(uuid())
+  orderId       String
+  order         Order     @relation("OrderBids", fields: [orderId], references: [id])
+  tailorId      String
+  tailor        Tailor    @relation(fields: [tailorId], references: [id])
+  
+  price         Float     // Tailor's quoted price
+  estimatedDays Int       // Estimated completion days
+  message       String?   // Optional message to consumer
+  
+  status        BidStatus @default(PENDING)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  selectedForOrder Order? @relation("SelectedBid")
+
+  @@unique([orderId, tailorId]) // One bid per tailor per order
+}
+
+// ─── PAYMENT (Consumer → NOVAPLM) ───────────────────────
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+  FAILED
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  orderId           String        @unique
+  order             Order         @relation(fields: [orderId], references: [id])
+  consumerId        String
+  consumer          Consumer      @relation(fields: [consumerId], references: [id])
+  
+  amount            Float         // Total amount paid by consumer
+  platformFee       Float         // 20%
+  tailorAmount      Float         // 80%
+  
+  stripePaymentId   String?
+  status            PaymentStatus @default(PENDING)
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  payout            Payout?
+}
+
+// ─── PAYOUT (NOVAPLM → Tailor) ──────────────────────────
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Payout {
+  id              String       @id @default(uuid())
+  paymentId       String       @unique
+  payment         Payment      @relation(fields: [paymentId], references: [id])
+  tailorId        String
+  tailor          Tailor       @relation(fields: [tailorId], references: [id])
+  
+  amount          Float        // 80% of payment
+  stripePayoutId  String?
+  status          PayoutStatus @default(PENDING)
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
